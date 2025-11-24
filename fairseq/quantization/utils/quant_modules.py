@@ -17,11 +17,33 @@ import logging
 
 import os
 import numpy as np
-LAYER_SAVE_COUNTS = {}
-SAVE_DIR = "/home/who/Desktop/ChengAn/I-BERT/input_output_result/"
-os.makedirs(SAVE_DIR, exist_ok=True)
 
 logger = logging.getLogger(__name__)
+
+LAYER_SAVE_COUNTS = {}
+SAVE_DIR = "/home/who/Desktop/ChengAn/I-BERT/result/"
+os.makedirs(SAVE_DIR, exist_ok=True)
+
+def _save_numpy_data(layer_name: str, filename: str, tensor_data: torch.Tensor):
+    if layer_name is None:
+        return
+
+    try:
+        relative_path = layer_name.replace('.', os.sep)
+        output_dir = os.path.join(SAVE_DIR, relative_path)
+        os.makedirs(output_dir, exist_ok=True)
+
+        if isinstance(tensor_data, torch.Tensor):
+            data_np = tensor_data.detach().cpu().numpy()
+        else:
+            data_np = np.array(tensor_data)
+            
+        save_path = os.path.join(output_dir, filename)
+        np.save(save_path, data_np)
+        print(f"[DEBUG] Saved {save_path} shape={data_np.shape}")
+        
+    except Exception as e:
+        print(f"[ERROR] Failed to save {filename} for {layer_name}: {e}")
 
 class QuantEmbedding(Module):
     """
@@ -268,48 +290,55 @@ class QuantAct(Module):
             self.activation_bit, x_min, x_max, 
             per_channel=self.per_channel)
 
+        # ==== Modified ====
         if pre_act_scaling_factor is None:
             # this is for the input quantization 
             quant_act_int = self.act_function(x, self.activation_bit, \
                     self.percentile, self.act_scaling_factor)
             input_int = quant_act_int
         else:
-            quant_act_int = fixedpoint_mul.apply(
-                    x, pre_act_scaling_factor, 
-                    self.activation_bit, self.quant_mode, 
-                    self.act_scaling_factor, 
-                    identity, identity_scaling_factor)
-            
             with torch.no_grad():
                 scale = pre_act_scaling_factor
                 if len(scale.shape) != 3:
                     scale = scale.view(1, 1, -1)
                 input_int = torch.round(x / scale)
 
+            output_int = quant_act_int = fixedpoint_mul.apply(
+                    x, pre_act_scaling_factor, 
+                    self.activation_bit, self.quant_mode, 
+                    self.act_scaling_factor, 
+                    identity, identity_scaling_factor)
+
         correct_output_scale = self.act_scaling_factor.view(-1)
 
-        output = quant_act_int * correct_output_scale
         if self.layer_name is not None:
             global LAYER_SAVE_COUNTS
             count = LAYER_SAVE_COUNTS.get(self.layer_name, 0)
 
             if count < 1:
                 try:
-                    inp_np = input_int.detach().cpu().numpy()
-                    out_np = quant_act_int.detach().cpu().numpy()
+                    # inp_np = input_int.detach().cpu().numpiy()
+                    # out_np = quant_act_int.detach().cpu().numpy()
 
-                    inp_path = os.path.join(SAVE_DIR, f"{self.layer_name}_input.npy")
-                    out_path = os.path.join(SAVE_DIR, f"{self.layer_name}_output.npy")
+                    # inp_path = os.path.join(SAVE_DIR, f"{self.layer_name}_input.npy")
+                    # out_path = os.path.join(SAVE_DIR, f"{self.layer_name}_output.npy")
 
-                    np.save(inp_path, inp_np)
-                    np.save(out_path, out_np)
+                    # np.save(inp_path, inp_np)
+                    # np.save(out_path, out_np)
                     # print(f"[DEBUG] Saved {self.layer_name} (Input shape: {inp_np.shape}, Output shape: {out_np.shape})")
 
+                    if input_int is not None:
+                        _save_numpy_data(self.layer_name, "input_int.npy", input_int)
+                    _save_numpy_data(self.layer_name, "output_int.npy", output_int)
+                    _save_numpy_data(self.layer_name, "output_scaling_factor.npy", self.act_scaling_factor)
+                    if pre_act_scaling_factor is not None:
+                        _save_numpy_data(self.layer_name, "input_scaling_factor.npy", pre_act_scaling_factor)
+                    
                     LAYER_SAVE_COUNTS[self.layer_name] = count + 1
                 except Exception as e:
                     print(f"Error saving {self.layer_name}: {e}")
 
-        return output, self.act_scaling_factor
+        return output_int * correct_output_scale, self.act_scaling_factor
 
 
 class QuantLinear(Module):
@@ -417,30 +446,42 @@ class QuantLinear(Module):
         prev_act_scaling_factor = prev_act_scaling_factor.view(1, -1)
         x_int = x / prev_act_scaling_factor
 
-        output = F.linear(x_int, weight=self.weight_integer, bias=self.bias_integer)
+        output_int = F.linear(x_int, weight=self.weight_integer, bias=self.bias_integer)
         
         if self.layer_name is not None:
             global LAYER_SAVE_COUNTS
             count = LAYER_SAVE_COUNTS.get(self.layer_name, 0)
             if count < 1:
                 try:
-                    inp_np = x_int.detach().cpu().numpy()
-                    out_np = output.detach().cpu().numpy()
-                    weight_np = self.weight_integer.detach().cpu().numpy()
+                    # inp_np = x_int.detach().cpu().numpy()
+                    # out_np = output_int.detach().cpu().numpy()
+                    # weight_np = self.weight_integer.detach().cpu().numpy()
 
-                    inp_path = os.path.join(SAVE_DIR, f"{self.layer_name}_input.npy")
-                    out_path = os.path.join(SAVE_DIR, f"{self.layer_name}_output.npy")
+                    # inp_path = os.path.join(SAVE_DIR, f"{self.layer_name}_input.npy")
+                    # out_path = os.path.join(SAVE_DIR, f"{self.layer_name}_output.npy")
 
-                    np.save(inp_path, inp_np)
-                    np.save(out_path, out_np)
+                    # np.save(inp_path, inp_np)
+                    # np.save(out_path, out_np)
 
-                    print(f"[DEBUG] Saved {self.layer_name} (Input shape: {inp_np.shape}, Weight shape: {weight_np.shape}, Output shape: {out_np.shape})")
+                    # print(f"[DEBUG] Saved {self.layer_name} (Input shape: {inp_np.shape}, Weight shape: {weight_np.shape}, Output shape: {out_np.shape})")
 
+                    _save_numpy_data(self.layer_name, "input_int.npy", x_int)
+                    
+                    _save_numpy_data(self.layer_name, "output_int.npy", output_int)
+                    
+                    _save_numpy_data(self.layer_name, "weight_int.npy", self.weight_integer)
+                    
+                    if self.bias_integer is not None:
+                        _save_numpy_data(self.layer_name, "bias_int.npy", self.bias_integer)
+
+                    _save_numpy_data(self.layer_name, "input_scaling_factor.npy", prev_act_scaling_factor)
+                    _save_numpy_data(self.layer_name, "weight_scaling_factor.npy", self.fc_scaling_factor) # 即 fc_scaling_factor
+                    _save_numpy_data(self.layer_name, "bias_scaling_factor.npy", bias_scaling_factor)
                     LAYER_SAVE_COUNTS[self.layer_name] = count + 1
                 except Exception as e:
                     print(f"Error saving {self.layer_name}: {e}")
 
-        return output * bias_scaling_factor, bias_scaling_factor
+        return output_int * bias_scaling_factor, bias_scaling_factor
 
 
 class IntLayerNorm(Module):

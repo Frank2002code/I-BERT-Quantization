@@ -117,6 +117,7 @@ ENV/
 # data
 data-bin/
 models/
+outputs/
 
 # reranking
 /examples/reranking/rerank_data
