@@ -2,6 +2,8 @@
 
 # I-BERT: Integer-only BERT Quantization
 
+* Input_int, output_int, weight_int 位置: result/
+
 ## HuggingFace Implementation
 I-BERT is also available in the master branch of HuggingFace!
 Visit the following links for the HuggingFace implementation.
@@ -67,44 +69,17 @@ If the command is run propely, preprocessed datasets will be stored in `I-BERT/{
 
 Now, you have the models and the datasets ready, so you are ready to run I-BERT!
 
-
-## Task-specific Model Finetuning
-
-Before quantizing the model, you first have to finetune the pre-trained models to a specific downstream task. 
-Although you can finetune the model from the original Fairseq repo, we provide `ibert-base` branch where you can train non-quantized models without having to install the original Fairseq. 
-This branch is identical to the master branch of the original Fairseq repo, except for some loggings and run scripts that are irrelevant to the functionality.
-If you already have finetuned models, you can skip this part.
-
-Run the following commands to fetch and move to the `ibert-base` branch:
-```bash
-# In I-BERT (root) directory
-git fetch
-git checkout -t origin/ibert-base
-```
-
-Then, run the script:
-```bash
-# In I-BERT (root) directory
-# CUDA_VISIBLE_DEVICES={device} python run.py --arch {roberta_base|roberta_large} --task {task_name}
-CUDA_VISIBLE_DEVICES=0 python run.py --arch roberta_base --task MRPC
-```
 Checkpoints and validation logs will be stored at `./outputs` directory. You can change this output location by adding the option `--output-dir OUTPUT_DIR`. The exact output location will look something like: `./outputs/none/MRPC-base/wd0.1_ad0.1_d0.1_lr2e-5/1219-101427_ckpt/checkpoint_best.pt`.
 By default, models are trained according to the task-specific hyperparameters specified in [Fairseq Finetuning on GLUE](https://github.com/pytorch/fairseq/blob/master/examples/roberta/README.glue.md). However, you can also specify the hyperparameters with the options (use the option `-h` for more details). 
 
-
 ## Quantiation & Quantization-Aware-Finetuning
-
-Now, we come back to `ibert` branch for quantization. 
-```bash
-git checkout ibert
-```
 
 And then run the script. This will first quantize the model and do quantization-aware-finetuning with the learning rate that you specify with the option `--lr {lr}`.
 ```bash
 # In I-BERT (root) directory
 # CUDA_VISIBLE_DEVICES={device} python run.py --arch {roberta_base|roberta_large} --task {task_name} \
 # --restore-file {ckpt_path} --lr {lr}
-CUDA_VISIBLE_DEVICES=0 python run.py --arch roberta_base --task MRPC --restore-file ckpt-best.pt --lr 1e-6
+bash scripts/run.sh
 ```
 
 **NOTE:** Our work is still on progress. Currently, all integer operations are executed with floating point.
