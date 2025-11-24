@@ -15,6 +15,12 @@ from fairseq import utils
 
 import logging
 
+import os
+import numpy as np
+LAYER_SAVE_COUNTS = {}
+SAVE_DIR = "/home/who/Desktop/ChengAn/I-BERT/input_output_result/"
+os.makedirs(SAVE_DIR, exist_ok=True)
+
 logger = logging.getLogger(__name__)
 
 class QuantEmbedding(Module):
@@ -173,6 +179,7 @@ class QuantAct(Module):
         self.running_stat = running_stat
         self.quant_mode = quant_mode
         self.percentile = False
+        self.layer_name = None
 
         if not per_channel:
             self.register_buffer('x_min', torch.zeros(1))
@@ -265,16 +272,44 @@ class QuantAct(Module):
             # this is for the input quantization 
             quant_act_int = self.act_function(x, self.activation_bit, \
                     self.percentile, self.act_scaling_factor)
+            input_int = quant_act_int
         else:
             quant_act_int = fixedpoint_mul.apply(
                     x, pre_act_scaling_factor, 
                     self.activation_bit, self.quant_mode, 
                     self.act_scaling_factor, 
                     identity, identity_scaling_factor)
+            
+            with torch.no_grad():
+                scale = pre_act_scaling_factor
+                if len(scale.shape) != 3:
+                    scale = scale.view(1, 1, -1)
+                input_int = torch.round(x / scale)
 
         correct_output_scale = self.act_scaling_factor.view(-1)
 
-        return quant_act_int * correct_output_scale, self.act_scaling_factor
+        output = quant_act_int * correct_output_scale
+        if self.layer_name is not None:
+            global LAYER_SAVE_COUNTS
+            count = LAYER_SAVE_COUNTS.get(self.layer_name, 0)
+
+            if count < 1:
+                try:
+                    inp_np = input_int.detach().cpu().numpy()
+                    out_np = quant_act_int.detach().cpu().numpy()
+
+                    inp_path = os.path.join(SAVE_DIR, f"{self.layer_name}_input.npy")
+                    out_path = os.path.join(SAVE_DIR, f"{self.layer_name}_output.npy")
+
+                    np.save(inp_path, inp_np)
+                    np.save(out_path, out_np)
+                    # print(f"[DEBUG] Saved {self.layer_name} (Input shape: {inp_np.shape}, Output shape: {out_np.shape})")
+
+                    LAYER_SAVE_COUNTS[self.layer_name] = count + 1
+                except Exception as e:
+                    print(f"Error saving {self.layer_name}: {e}")
+
+        return output, self.act_scaling_factor
 
 
 class QuantLinear(Module):
@@ -305,6 +340,7 @@ class QuantLinear(Module):
         self.quantize_bias = (False if bias_bit is None else True)
         self.quant_mode = quant_mode
         self.percentile_mode = False
+        self.layer_name = None
 
         if self.quant_mode == "none":
             pass
@@ -343,6 +379,9 @@ class QuantLinear(Module):
         """
         using quantized weights to forward activation x
         """
+        global SAVE_COUNTER
+        output = None
+
         if self.quant_mode == 'none':
             return F.linear(x, weight=self.weight, bias=self.bias), None
 
@@ -378,8 +417,30 @@ class QuantLinear(Module):
         prev_act_scaling_factor = prev_act_scaling_factor.view(1, -1)
         x_int = x / prev_act_scaling_factor
 
-        return F.linear(x_int, weight=self.weight_integer, bias=self.bias_integer) \
-                * bias_scaling_factor, bias_scaling_factor
+        output = F.linear(x_int, weight=self.weight_integer, bias=self.bias_integer)
+        
+        if self.layer_name is not None:
+            global LAYER_SAVE_COUNTS
+            count = LAYER_SAVE_COUNTS.get(self.layer_name, 0)
+            if count < 1:
+                try:
+                    inp_np = x_int.detach().cpu().numpy()
+                    out_np = output.detach().cpu().numpy()
+                    weight_np = self.weight_integer.detach().cpu().numpy()
+
+                    inp_path = os.path.join(SAVE_DIR, f"{self.layer_name}_input.npy")
+                    out_path = os.path.join(SAVE_DIR, f"{self.layer_name}_output.npy")
+
+                    np.save(inp_path, inp_np)
+                    np.save(out_path, out_np)
+
+                    print(f"[DEBUG] Saved {self.layer_name} (Input shape: {inp_np.shape}, Weight shape: {weight_np.shape}, Output shape: {out_np.shape})")
+
+                    LAYER_SAVE_COUNTS[self.layer_name] = count + 1
+                except Exception as e:
+                    print(f"Error saving {self.layer_name}: {e}")
+
+        return output * bias_scaling_factor, bias_scaling_factor
 
 
 class IntLayerNorm(Module):
@@ -482,7 +543,8 @@ class IntLayerNorm(Module):
                 assert var_int.max() < 2**32
         
         # To be replaced with integer-sqrt kernel that produces the same output
-        std_int = floor_ste.apply(torch.sqrt(var_int)) * 2 ** self.shift 
+        std_int = floor_ste.apply(torch.sqrt(var_int)) * 2 ** self.shift
+        std_int = torch.clamp(std_int, min=1.0)  # Prevent NaN
         factor = floor_ste.apply(2**31 / std_int)
         y_int = floor_ste.apply(y_int * factor / 2)
         scaling_factor = self.dim_sqrt / 2**30
@@ -652,6 +714,7 @@ class IntSoftmax(Module):
         exp, exp_scaling_factor = self.act(exp_int, exp_scaling_factor)
         exp_int = exp / exp_scaling_factor
         exp_int_sum = exp_int.sum(dim=-1, keepdim=True)
+        exp_int_sum = torch.clamp(exp_int_sum, min=1.0)  # Prevent NaN
 
         factor = floor_ste.apply(2**32 / exp_int_sum)
         exp_int = floor_ste.apply(exp_int * factor / 2 ** (32 - self.output_bit))

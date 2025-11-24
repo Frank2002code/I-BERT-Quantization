@@ -39,6 +39,9 @@ logger = logging.getLogger("fairseq_cli.train")
 
 
 def main(args):
+    args.max_update = 1
+    args.disable_validation = True
+
     utils.import_user_module(args)
 
     assert (
@@ -65,6 +68,10 @@ def main(args):
 
     # Build model and criterion
     model = task.build_model(args)
+    # Inject layer name
+    for name, module in model.named_modules():
+        if hasattr(module, 'layer_name'):
+            module.layer_name = name
     criterion = task.build_criterion(args)
     logger.info(model)
     logger.info("task: {} ({})".format(args.task, task.__class__.__name__))

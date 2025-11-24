@@ -133,7 +133,7 @@ task_specs = {
         'dataset': 'MRPC-bin',
         'num_classes': '2',
         'lr': '1e-5',
-        'max_sentences': '16',
+        'max_sentences': '1',
         'total_num_updates': '2296',
         'warm_updates': '137'
     },
@@ -154,7 +154,7 @@ dataset = '%s-bin' % task
 num_classes = spec['num_classes']
 total_num_updates = spec['total_num_updates']
 warm_updates = spec['warm_updates']
-max_epochs = '6' if task in ['MNLI', 'QQP'] else '12'
+max_epochs = '1' if task in ['MNLI', 'QQP'] else '1'
 
 lr = str(args.lr) if args.lr else spec['lr'] 
 bs = str(args.bs) if args.bs else spec['max_sentences']
@@ -191,7 +191,7 @@ subprocess_args = [
     '--valid-subset', valid_subset,
     '--max-positions', '512',
     '--max-sentences', bs,
-    '--max-tokens', '4400',
+    '--max-tokens', '10000',
     '--task', 'sentence_prediction',
     '--criterion', 'sentence_prediction',
     '--reset-optimizer',  '--reset-dataloader', '--reset-meters',
