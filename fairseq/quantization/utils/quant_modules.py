@@ -408,9 +408,6 @@ class QuantLinear(Module):
         """
         using quantized weights to forward activation x
         """
-        global SAVE_COUNTER
-        output = None
-
         if self.quant_mode == 'none':
             return F.linear(x, weight=self.weight, bias=self.bias), None
 
