@@ -615,6 +615,7 @@ class IntGELU(Module):
         super(IntGELU, self).__init__()
         self.register_buffer('input_scaling_factor', torch.ones(1))
         self.quant_mode = quant_mode
+        self.layer_name = None
         if force_dequant in ['nonlinear', 'gelu']:
             logger.info("Force dequantize gelu")
             self.quant_mode = 'none'
@@ -665,12 +666,27 @@ class IntGELU(Module):
                 "unsupported quant mode: {}".format(quant_mode)
 
         x_int = x / scaling_factor
+        input_int = x_int
+        input_scaling_factor = scaling_factor
         sigmoid_int, sigmoid_scaling_factor = self.int_erf(x_int, scaling_factor / self.k)
 
         shift_int = torch.floor(1. / sigmoid_scaling_factor)
 
         x_int = x_int * (sigmoid_int + shift_int)
         scaling_factor = scaling_factor * sigmoid_scaling_factor / 2
+
+        if self.layer_name is not None:
+            global LAYER_SAVE_COUNTS
+            count = LAYER_SAVE_COUNTS.get(self.layer_name, 0)
+            if count < 1:
+                try:
+                    _save_numpy_data(self.layer_name, "input_int.npy", input_int)
+                    _save_numpy_data(self.layer_name, "output_int.npy", x_int)
+                    _save_numpy_data(self.layer_name, "input_scaling_factor.npy", input_scaling_factor)
+                    _save_numpy_data(self.layer_name, "output_scaling_factor.npy", scaling_factor)
+                    LAYER_SAVE_COUNTS[self.layer_name] = count + 1
+                except Exception as e:
+                    print(f"Error saving {self.layer_name}: {e}")
 
         return x_int * scaling_factor, scaling_factor
 
@@ -693,6 +709,7 @@ class IntSoftmax(Module):
                  quant_mode='none',
                  force_dequant='none'):
         super(IntSoftmax, self).__init__()
+        self.layer_name = None
         self.output_bit = output_bit
         self.quant_mode = quant_mode
         if force_dequant in ['nonlinear', 'softmax']:
@@ -743,6 +760,7 @@ class IntSoftmax(Module):
                 "unsupported quant mode: {}".format(quant_mode)
 
         x_int = x / scaling_factor
+        input_int = x_int
 
         x_int_max, _ = x_int.max(dim=-1, keepdim=True)
         x_int = x_int - x_int_max
@@ -752,6 +770,19 @@ class IntSoftmax(Module):
         exp, exp_scaling_factor = self.act(exp_int, exp_scaling_factor)
         exp_int = exp / exp_scaling_factor
         exp_int_sum = exp_int.sum(dim=-1, keepdim=True)
+
+        if self.layer_name is not None:
+            global LAYER_SAVE_COUNTS
+            count = LAYER_SAVE_COUNTS.get(self.layer_name, 0)
+            if count < 1:
+                try:
+                    _save_numpy_data(self.layer_name, "input_int.npy", input_int)
+                    _save_numpy_data(self.layer_name, "output_int.npy", exp_int)
+                    _save_numpy_data(self.layer_name, "output_scaling_factor.npy", scaling_factor)
+                    LAYER_SAVE_COUNTS[self.layer_name] = count + 1
+                except Exception as e:
+                    print(f"Error saving {self.layer_name}: {e}")
+
         exp_int_sum = torch.clamp(exp_int_sum, min=1.0)  # Prevent NaN
 
         factor = floor_ste.apply(2**32 / exp_int_sum)
