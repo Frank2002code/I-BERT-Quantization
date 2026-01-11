@@ -210,105 +210,76 @@ def verify_v_softmax():
     v_path = os.path.join(BASE_DIR, "self_attn", "v_proj_act")
     attn_act_path = os.path.join(BASE_DIR, "self_attn", "attn_act")
 
-    # Load Softmax Output (Probs)
+    # Load Data
     probs_float, _, _ = load_dequantized(softmax_path, "output")
-    # Load V Output
     v_float, _, _ = load_dequantized(v_path, "output")
-    # Load Attn Act Output (Context)
     context_float, _, _ = load_dequantized(attn_act_path, "output")
 
     if probs_float is None or v_float is None or context_float is None:
         print("Skipping V * Softmax verification due to missing files.")
-        if probs_float is None:
-            print(f"Missing {softmax_path}/output_int.npy")
-        if v_float is None:
-            print(f"Missing {v_path}/output_int.npy")
-        if context_float is None:
-            print(f"Missing {attn_act_path}/output_int.npy")
         return
 
-    # Dimensions
-    # Probs: (B, NumHeads, S, S)
-    # V: (B, S, HiddenDim) -> Needs reshape -> (B, NumHeads, S, HeadDim)
-    # Context expected: (B, S, HiddenDim) -> or maybe (B, NumHeads, S, HeadDim) before merge?
-    # Usually attn_act output is the result BEFORE the final Linear projection (out_proj),
-    # so it matches the V shape (B, S, H) or (B, H, S, D).
-
-    # Let's infer shapes
-
-    # Analyze Probs Shape (similar to QK^T verification)
+    # --- 修正開始: 形狀推斷邏輯 ---
+    # 1. 處理 Probs (Softmax Output)
+    # 目標形狀: (Batch, NumHeads, SeqLen, SeqLen)
     real_S = 0
     if probs_float.ndim == 3:
-        # (Batch*Heads, SeqLen, SeqLen)
+        # 原始: (Batch*Heads, S, S)
         B_combined, S1, S2 = probs_float.shape
-        assert S1 == S2, "Probs last two dims must correspond to SeqLen"
         real_S = S1
-        # Reshape to (B_combined, 1, S, S) for easier matmul later, or keep as is?
-        # Let's keep as (B*NumHeads, S, S)
+        # 暫時不知道 B 和 Heads 是多少，稍後處理
     elif probs_float.ndim == 4:
-        B_t, NumHeads, S1, S2 = probs_float.shape
-        B_combined = B_t * NumHeads
+        B_t, NumHeads_t, S1, S2 = probs_float.shape
         real_S = S1
-        # Flatten to (B*NumHeads, S, S)
-        probs_float = probs_float.reshape(B_combined, real_S, real_S)
-    else:
-        print(f"Unexpected probs shape: {probs_float.shape}")
-        return
-
-    # Analyze V Shape
+        B_combined = B_t * NumHeads_t
+    
+    # 2. 處理 V (Value)
+    # 原始可能為 (SeqLen, Batch, Hidden) 或 (Batch, SeqLen, Hidden)
     dim0, dim1, dim2 = v_float.shape
     if dim0 == real_S:
-        # (S, B, H)
+        # (SeqLen, Batch, Hidden) -> Fairseq 標準格式
         S, B, H_dim = dim0, dim1, dim2
-        # Transpose to (B, S, H)
-        v_float = v_float.transpose(1, 0, 2)
+        v_float = v_float.transpose(1, 0, 2) # 轉成 (Batch, SeqLen, Hidden)
     elif dim1 == real_S:
-        # (B, S, H)
+        # (Batch, SeqLen, Hidden)
         B, S, H_dim = dim0, dim1, dim2
     else:
-        print(f"Could not match V shape {v_float.shape} with Probs SeqLen {real_S}")
+        print(f"Shape Error: V shape {v_float.shape} mismatch with SeqLen {real_S}")
         return
 
+    # 3. 計算 Heads
     NumHeads = B_combined // B
-    if NumHeads == 0:
-        NumHeads = 1  # Safety
     HeadDim = H_dim // NumHeads
+    print(f"Shapes: B={B}, S={S}, Heads={NumHeads}, HeadDim={HeadDim}")
 
-    # Reshape V
-    # (B, S, H) -> (B, S, NumHeads, HeadDim) -> (B, NumHeads, S, HeadDim)
+    # 4. [關鍵修正] Reshape Probs 成為 4D
+    # (B*H, S, S) -> (B, H, S, S)
+    if probs_float.ndim == 3:
+        probs_float = probs_float.reshape(B, NumHeads, S, S)
+
+    # 5. Reshape V 成為 4D
+    # (B, S, H) -> (B, S, Heads, HeadDim) -> (B, Heads, S, HeadDim)
     v_reshaped = v_float.reshape(B, S, NumHeads, HeadDim).transpose(0, 2, 1, 3)
 
-    # Compute Probs @ V
-    # (B, NumHeads, S, S) @ (B, NumHeads, S, HeadDim) -> (B, NumHeads, S, HeadDim)
+    # --- 矩陣乘法 ---
+    # (B, H, S, S) @ (B, H, S, D) -> (B, H, S, D)
     context_calc = np.matmul(probs_float, v_reshaped)
 
-    # The stored comparison context might be flattened back to (B, S, H) or kept as (B, H, S, D).
-    # Let's check context_float shape
-    if context_float.shape == (S, B, H_dim):
-        print(
-            f"Target shape detected as (SeqLen, Batch, Hidden): {context_float.shape}"
-        )
-        # Calc is (B, NumHeads, S, HeadDim)
-        # We need (S, B, NumHeads * HeadDim)
+    # --- 比較結果 ---
+    # 因為 context_float 存檔時可能是 (SeqLen, Batch, Hidden)
+    # 我們需要把計算結果轉回去比較
+    
+    # 計算結果目前是 (B, Heads, S, HeadDim)
+    # 轉成 (S, B, Heads, HeadDim)
+    context_calc_transposed = context_calc.transpose(2, 0, 1, 3)
+    # 合併最後兩維 -> (S, B, Hidden)
+    context_calc_final = context_calc_transposed.reshape(S, B, H_dim)
 
-        # 1. Transpose to (S, B, NumHeads, HeadDim)
-        context_calc_transposed = context_calc.transpose(2, 0, 1, 3)
+    # 如果存檔是 (B, S, H)，再轉一次
+    if context_float.shape == (B, S, H_dim):
+        context_calc_final = context_calc_final.transpose(1, 0, 2)
 
-        # 2. Reshape to (S, B, HiddenDim)
-        context_calc_final = context_calc_transposed.reshape(S, B, H_dim)
-
-        check_correlation(
-            context_calc_final, context_float, "V * Softmax (Corrected Layout)"
-        )
-    elif context_float.shape == (B, S, H_dim):
-        check_correlation(context_calc, context_float, "V * Softmax (Heads)")
-    else:
-        print(
-            f"Shape mismatch: Calc {context_calc.shape} vs Loaded {context_float.shape}"
-        )
-        # Try comparing flattened
-        check_correlation(context_calc, context_float, "V * Softmax (Flattened)")
-
+    check_correlation(context_calc_final, context_float, "V * Softmax (Context)")
 
 if __name__ == "__main__":
     if not os.path.exists(BASE_DIR):
