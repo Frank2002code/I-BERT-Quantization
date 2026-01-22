@@ -761,31 +761,39 @@ class IntSoftmax(Module):
 
         x_int = x / scaling_factor
         input_int = x_int
-
-        x_int_max, _ = x_int.max(dim=-1, keepdim=True)
-        x_int = x_int - x_int_max
-
-
-        exp_int, exp_scaling_factor = self.int_exp(x_int, scaling_factor)
-        exp, exp_scaling_factor = self.act(exp_int, exp_scaling_factor)
-        exp_int = exp / exp_scaling_factor
-        exp_int_sum = exp_int.sum(dim=-1, keepdim=True)
-
+        
         if self.layer_name is not None:
             global LAYER_SAVE_COUNTS
             count = LAYER_SAVE_COUNTS.get(self.layer_name, 0)
             if count < 1:
                 try:
                     _save_numpy_data(self.layer_name, "input_int.npy", input_int)
+                    _save_numpy_data(self.layer_name, "input_scaling_factor.npy", scaling_factor)
+                except Exception as e:
+                    print(f"Error saving {self.layer_name}: {e}")
+
+        x_int_max, _ = x_int.max(dim=-1, keepdim=True)
+        x_int = x_int - x_int_max
+
+        exp_int, exp_scaling_factor = self.int_exp(x_int, scaling_factor)
+        exp, exp_scaling_factor = self.act(exp_int, exp_scaling_factor)
+        exp_int = exp / exp_scaling_factor
+        exp_int_sum = exp_int.sum(dim=-1, keepdim=True)
+        exp_int_sum = torch.clamp(exp_int_sum, min=1.0)  # Prevent NaN
+
+        factor = floor_ste.apply(2**32 / exp_int_sum)
+        exp_int = floor_ste.apply(exp_int * factor / 2 ** (32 - self.output_bit))
+        scaling_factor = 1 / 2 ** self.output_bit
+
+        if self.layer_name is not None:
+            global LAYER_SAVE_COUNTS
+            count = LAYER_SAVE_COUNTS.get(self.layer_name, 0)
+            if count < 1:
+                try:
                     _save_numpy_data(self.layer_name, "output_int.npy", exp_int)
                     _save_numpy_data(self.layer_name, "output_scaling_factor.npy", scaling_factor)
                     LAYER_SAVE_COUNTS[self.layer_name] = count + 1
                 except Exception as e:
                     print(f"Error saving {self.layer_name}: {e}")
 
-        exp_int_sum = torch.clamp(exp_int_sum, min=1.0)  # Prevent NaN
-
-        factor = floor_ste.apply(2**32 / exp_int_sum)
-        exp_int = floor_ste.apply(exp_int * factor / 2 ** (32 - self.output_bit))
-        scaling_factor = 1 / 2 ** self.output_bit
         return exp_int * scaling_factor, scaling_factor
