@@ -196,7 +196,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
         # FC2
         x, x_scaling_factor = self.fc2(x, x_scaling_factor)
 
-        x = self.dropout_module(x)
+        # x = self.dropout_module(x)
 
         # Pre LN2 activation (+ residual addition)
         x, x_scaling_factor = self.pre_final_layer_norm_act(

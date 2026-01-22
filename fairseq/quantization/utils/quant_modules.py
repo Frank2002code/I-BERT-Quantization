@@ -576,7 +576,6 @@ class IntLayerNorm(Module):
                 try:
                     _save_numpy_data(self.layer_name, "input_int.npy", x_int)
                     _save_numpy_data(self.layer_name, "input_scaling_factor.npy", scaling_factor)
-                    LAYER_SAVE_COUNTS[self.layer_name] = count + 1
                 except Exception as e:
                     print(f"Error saving {self.layer_name}: {e}")
         mean_int = round_ste.apply(x_int.mean(axis=2, keepdim=True))
