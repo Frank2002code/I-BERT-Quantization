@@ -329,6 +329,8 @@ class QuantAct(Module):
 
                     if input_int is not None:
                         _save_numpy_data(self.layer_name, "input_int.npy", input_int)
+                    if identity is not None:
+                        _save_numpy_data(self.layer_name, "residual_int.npy", identity)
                     _save_numpy_data(self.layer_name, "output_int.npy", output_int)
                     _save_numpy_data(self.layer_name, "output_scaling_factor.npy", self.act_scaling_factor)
                     if pre_act_scaling_factor is not None:
