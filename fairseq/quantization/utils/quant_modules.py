@@ -297,11 +297,11 @@ class QuantAct(Module):
                     self.percentile, self.act_scaling_factor)
             input_int = quant_act_int
         else:
-            with torch.no_grad():
-                scale = pre_act_scaling_factor
-                if len(scale.shape) != 3:
-                    scale = scale.view(1, 1, -1)
-                input_int = torch.round(x / scale)
+            # with torch.no_grad():
+            #     scale = pre_act_scaling_factor
+            #     if len(scale.shape) != 3:
+            #         scale = scale.view(1, 1, -1)
+            #     input_int = torch.round(x / scale)
 
             output_int = quant_act_int = fixedpoint_mul.apply(
                     x, pre_act_scaling_factor, 
