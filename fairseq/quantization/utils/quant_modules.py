@@ -510,6 +510,7 @@ class IntLayerNorm(Module):
         self.register_buffer('shift', torch.zeros(1))
         self.output_bit = output_bit
         self.dim_sqrt = None
+        self.layer_name = None
 
         self.activation = QuantAct(output_bit, quant_mode=self.quant_mode)
         if self.quant_mode == "none":
@@ -568,6 +569,16 @@ class IntLayerNorm(Module):
 
         # Normalization: computes mean and variance(std)
         x_int = x / scaling_factor
+        if self.layer_name is not None:
+            global LAYER_SAVE_COUNTS
+            count = LAYER_SAVE_COUNTS.get(self.layer_name, 0)
+            if count < 1:
+                try:
+                    _save_numpy_data(self.layer_name, "input_int.npy", x_int)
+                    _save_numpy_data(self.layer_name, "input_scaling_factor.npy", scaling_factor)
+                    LAYER_SAVE_COUNTS[self.layer_name] = count + 1
+                except Exception as e:
+                    print(f"Error saving {self.layer_name}: {e}")
         mean_int = round_ste.apply(x_int.mean(axis=2, keepdim=True))
         y_int = x_int - mean_int
         y_int_shifted = floor_ste.apply(y_int / 2 ** self.shift) # avoid overflow
@@ -590,10 +601,29 @@ class IntLayerNorm(Module):
         # scaling and shifting
         bias = self.bias.data.detach() / (self.weight.data.detach())
         bias_int = floor_ste.apply(bias / scaling_factor)
+        if self.layer_name is not None:
+            count = LAYER_SAVE_COUNTS.get(self.layer_name, 0)
+            if count < 1:
+                try:
+                    _save_numpy_data(self.layer_name, "bias_int.npy", bias_int)
+                    _save_numpy_data(self.layer_name, "bias_scaling_factor.npy", scaling_factor)
+                except Exception as e:
+                    print(f"Error saving {self.layer_name}: {e}")
 
         y_int = y_int + bias_int
+        # end
         scaling_factor = scaling_factor * self.weight
         x = y_int * scaling_factor
+        
+        if self.layer_name is not None:
+            count = LAYER_SAVE_COUNTS.get(self.layer_name, 0)
+            if count < 1:
+                try:
+                    _save_numpy_data(self.layer_name, "output_int.npy", y_int)
+                    _save_numpy_data(self.layer_name, "output_scaling_factor.npy", scaling_factor)
+                    LAYER_SAVE_COUNTS[self.layer_name] = count + 1
+                except Exception as e:
+                    print(f"Error saving {self.layer_name}: {e}")
 
         return x, scaling_factor
 
