@@ -786,7 +786,6 @@ class IntSoftmax(Module):
         scaling_factor = 1 / 2 ** self.output_bit
 
         if self.layer_name is not None:
-            global LAYER_SAVE_COUNTS
             count = LAYER_SAVE_COUNTS.get(self.layer_name, 0)
             if count < 1:
                 try:
