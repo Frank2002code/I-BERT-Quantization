@@ -105,7 +105,7 @@ class MultiheadAttention(nn.Module):
                                   quant_mode=self.quant_mode,
                                   force_dequant=self.force_dequant)
 
-        self.attn_probs_act = QuantAct(self.act_bit, quant_mode=self.quant_mode)
+        # self.attn_probs_act = QuantAct(self.act_bit, quant_mode=self.quant_mode)
         self.attn_act = QuantAct(self.act_bit, quant_mode=self.quant_mode)
 
         out_proj = QuantLinear(self.fc_weight_bit, bias_bit=self.fc_bias_bit, 
@@ -379,6 +379,7 @@ class MultiheadAttention(nn.Module):
 
         ####################################################################################
 
+        # ==== Q*K^T ====
         attn_weights = torch.bmm(q, k.transpose(1, 2)) 
         if q_scaling_factor is not None:
             # attn_weights / attn_weights_scaling_factor is integer
